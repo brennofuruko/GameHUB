@@ -3,10 +3,14 @@
 // const cors = require("cors");
 // const conexao = require("./db.js");
 
-import "dotenv/config";
+import "dotenv/config"
 import express from "express";
 import cors from "cors";
 import conexao from "./db.js";
+import { textoValido, inteiroPositivo } from "./src/utils/validacos.js";
+import validarId from "./src/middlewares/validarId.js";
+import tratarErro from "./src/middlewares/tratarErro.js";
+import estudioRoute from "./src/routes/estudioRoute.js";
 
 const app = express();
 const PORTA = Number(process.env.PORTA || 3000);
@@ -17,126 +21,9 @@ app.get("/", (req, res) => {
     res.status(200).json({ mensagem: "API do GameHub funcionando" });
 });
 
-function textoValido(valor, limite) {
-    return typeof valor === "string"
-        && valor.trim().length > 0
-        && valor.trim().length <= limite;
-}
-
-function inteiroPositivo(valor) {
-    return typeof valor === "number"
-        && Number.isSafeInteger(valor)
-        && valor > 0;
-}
-
-function validarId(req, res, next) {
-    const id = Number(req.params.id);
-
-    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(id) || id <= 0) {
-        return res.status(400).json({ erro: "O ID deve ser um número inteiro positivo" });
-    }
-
-    req.id = id;
-    next();
-}
-
-function tratarErro(erro, req, res, next) {
-    if (res.headersSent) return next(erro);
-
-    if (erro.type === "entity.parse.failed") {
-        return res.status(400).json({ erro: "JSON inválido no corpo da requisição" });
-    }
-
-    if (erro.code === "ER_DUP_ENTRY" || erro.errno === 1062) {
-        return res.status(409).json({ erro: "Este nickname já está em uso" });
-    }
-
-    // Cadastro/edição com uma chave estrangeira inexistente.
-    if (erro.code === "ER_NO_REFERENCED_ROW_2" || erro.errno === 1452) {
-        return res.status(400).json({ erro: "O estudio informado não existe" });
-    }
-
-    // Exclusão de um registro que ainda possui dependentes.
-    if (erro.code === "ER_ROW_IS_REFERENCED_2" || erro.errno === 1451) {
-        return res.status(409).json({
-            erro: "Este registro possui vínculos. Exclua primeiro os registros dependentes"
-        });
-    }
-
-    // Mantém erros HTTP de leitura do corpo, como limite de tamanho.
-    if (Number.isInteger(erro.status) && erro.status >= 400 && erro.status < 500) {
-        return res.status(erro.status).json({ erro: "Corpo da requisição inválido" });
-    }
-
-    console.error("Erro na API:", erro.code || erro.message);
-    return res.status(500).json({ erro: "Não foi possível concluir a operação" });
-}
-
 // #region estudios
 
-app.get("/estudios", (req, res, next) => {
-    conexao.query("SELECT * FROM estudios ORDER BY id", (erro, resultado) => {
-        if (erro) return next(erro);
-        return res.status(200).json(resultado);
-    });
-});
-
-app.get("/estudios/:id", validarId, (req, res, next) => {
-    conexao.query("SELECT * FROM estudios WHERE id = ?", [req.id], (erro, resultado) => {
-        if (erro) return next(erro);
-        if (resultado.length === 0) {
-            return res.status(404).json({ erro: "Estúdio não encontrado" });
-        }
-        return res.status(200).json(resultado[0]);
-    });
-});
-
-app.post("/estudios", (req, res, next) => {
-    const { nome, pais } = req.body ?? {};
-    if (!textoValido(nome, 100) || !textoValido(pais, 60)) {
-        return res.status(400).json({ erro: "Informe nome (até 100 caracteres) e pais (até 60)" });
-    }
-    const dados = { nome: nome.trim(), pais: pais.trim() };
-
-    conexao.query("INSERT INTO estudios (nome, pais) VALUES (?, ?)", [dados.nome, dados.pais], (erro, resultado) => {
-        if (erro) return next(erro);
-        return res.status(201).json({
-            mensagem: "Estúdio cadastrado com sucesso",
-            id: resultado.insertId
-        });
-    });
-});
-
-app.put("/estudios/:id", validarId, (req, res, next) => {
-    const { nome, pais } = req.body ?? {};
-    if (!textoValido(nome, 100) || !textoValido(pais, 60)) {
-        return res.status(400).json({ erro: "Informe nome (até 100 caracteres) e pais (até 60)" });
-    }
-    const dados = { nome: nome.trim(), pais: pais.trim() };
-
-    // Consulta didática para confirmar que o registro existe antes de editar.
-    conexao.query("SELECT * FROM estudios WHERE id = ?", [req.id], (erro, registros) => {
-        if (erro) return next(erro);
-        if (registros.length === 0) {
-            return res.status(404).json({ erro: "Estúdio não encontrado" });
-        }
-        conexao.query("UPDATE estudios SET nome = ?, pais = ? WHERE id = ?", [dados.nome, dados.pais, req.id], (erro, resultado) => {
-            if (erro) return next(erro);
-            return res.status(200).json({ mensagem: "Estúdio atualizado com sucesso" });
-        });
-    });
-});
-
-app.delete("/estudios/:id", validarId, (req, res, next) => {
-    conexao.query("DELETE FROM estudios WHERE id = ?", [req.id], (erro, resultado) => {
-        if (erro) return next(erro);
-        if (resultado.affectedRows === 0) {
-            return res.status(404).json({ erro: "Estúdio não encontrado" });
-        }
-        return res.status(200).json({ mensagem: "Estúdio excluído com sucesso" });
-    });
-});
-
+app.use("/estudios", estudioRoute);
 // #endregion estudios
 // #region jogos
 
